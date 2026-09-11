@@ -157,6 +157,12 @@ export async function getDownloadInfo(
         status: response.status,
         bodyBytes: response.body.length,
         keys: Object.keys(dict),
+        // Whether Apple considers the session authorized, and whether the
+        // library holds anything at all, separates "no license" from
+        // "not signed in".
+        authorized: dict.authorized,
+        customerMessage: dict.customerMessage,
+        queueItemCount: dict["download-queue-item-count"],
       });
       throw new DownloadError(i18n.t("errors.download.noItems"));
     }

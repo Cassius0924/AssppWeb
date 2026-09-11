@@ -34,6 +34,13 @@ export interface Account {
   password: string;
   appleId: string;
   store: string;
+  /**
+   * Apple's x-set-apple-store-front verbatim (e.g. "143441-1,29"). `store`
+   * keeps only the numeric id because the rest of the app maps it to a
+   * country; requests that must echo the storefront use this instead of
+   * reassembling one.
+   */
+  storeFront?: string;
   firstName: string;
   lastName: string;
   passwordToken: string;

@@ -80,11 +80,16 @@ async function purchaseWithParams(
 
   const plistBody = buildPlist(payload);
 
+  // Echo the storefront Apple itself sent. Reassembling one from the numeric
+  // id guesses at the suffix, and a storefront Apple does not recognise comes
+  // back as a generic failure rather than a specific one.
+  const storeFront = account.storeFront || `${account.store}-1`;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/x-apple-plist",
     "iCloud-DSID": account.directoryServicesIdentifier,
     "X-Dsid": account.directoryServicesIdentifier,
-    "X-Apple-Store-Front": `${account.store}-1`,
+    "X-Apple-Store-Front": storeFront,
     "X-Token": account.passwordToken,
   };
 
@@ -113,6 +118,11 @@ async function purchaseWithParams(
       failureType,
       customerMessage,
       status: response.status,
+      storeFront,
+      storeFrontEchoed: Boolean(account.storeFront),
+      keys: Object.keys(dict),
+      dialog: dict.dialog,
+      action: dict.action,
     });
     switch (failureType) {
       case "2059":
