@@ -296,6 +296,30 @@ that, a Location-less redirect retries once against the host named by the `pod`
 response header. Always pass `account.pod` when re-authenticating an existing
 account.
 
+### Storefront Must Be Echoed, Not Rebuilt
+
+Sign-in keeps `x-set-apple-store-front` twice: `Account.store` holds only the
+numeric id, because the rest of the app maps that to a country, and
+`Account.storeFront` holds Apple's value verbatim (observed:
+`143441-1,34`). Requests that carry `X-Apple-Store-Front` send `storeFront`
+unchanged — the suffix is Apple's to choose, and rebuilding one guesses at it.
+
+### buyProduct failureType 5002
+
+Observed against a real account: `200 OK` with `failureType 5002`,
+`customerMessage "An unknown error has occurred"`, and a body holding nothing
+else (`pings`, `failureType`, `customerMessage`, `m-allowed` — no `dialog`, no
+`action`). It repeats for every app, so it describes the account or the device,
+not the request. In the same session `volumeStoreDownloadProduct` returns
+`authorized: false`, and the bag exposes an `authorizeMachine` endpoint
+(`https://buy.itunes.apple.com/commerce/machine/authorize`) that this client
+never calls.
+
+Ruled out as causes: the SAP signature (`sign-sap-request` lists only
+`MZFinance/authenticate`), the storefront suffix (5002 persists with Apple's
+own value echoed back), the request payload and headers (they match the
+reference field for field), and an empty token or DSID.
+
 ### Edge Responses vs Application Errors
 
 **Every response produced by the store application carries

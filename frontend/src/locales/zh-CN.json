@@ -466,6 +466,7 @@
     "purchase": {
       "paidNotSupported": "不支持购买付费应用",
       "unavailable": "项目暂时不可用",
+      "licenseDeclined": "Apple 拒绝授予许可证且未说明原因（5002）。通常先用该 Apple ID 在 App Store 里获取一次这个 App 就能解决。",
       "passwordExpired": "密码令牌已过期",
       "subscriptionRequired": "需要订阅",
       "termsRequired": "您必须接受条款与条件：{{url}}",

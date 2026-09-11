@@ -466,6 +466,7 @@
     "purchase": {
       "paidNotSupported": "有料アプリの購入はサポートされていません",
       "unavailable": "項目は一時的に利用できません",
+      "licenseDeclined": "Apple が理由を示さずにライセンスの付与を拒否しました（5002）。この Apple ID で App Store から一度アプリを入手すると解消することがほとんどです。",
       "passwordExpired": "パスワードトークンの期限が切れています",
       "subscriptionRequired": "サブスクリプションが必要です",
       "termsRequired": "利用規約に同意する必要があります: {{url}}",

@@ -120,11 +120,23 @@ async function purchaseWithParams(
       status: response.status,
       storeFront,
       storeFrontEchoed: Boolean(account.storeFront),
+      // Rules out the trivial explanations: a blank token or DSID would make
+      // any request fail, and neither value is inspectable from the server.
+      tokenPresent: Boolean(account.passwordToken),
+      dsidPresent: Boolean(account.directoryServicesIdentifier),
       keys: Object.keys(dict),
       dialog: dict.dialog,
       action: dict.action,
     });
     switch (failureType) {
+      // 5002 is Apple's catch-all: the response carries no dialog or action,
+      // and it comes back for every app, so it describes the account or the
+      // device rather than the request.
+      case "5002":
+        throw new PurchaseError(
+          i18n.t("errors.purchase.licenseDeclined"),
+          "5002",
+        );
       case "2059":
         throw new PurchaseError(i18n.t("errors.purchase.unavailable"), "2059");
       case "2034":

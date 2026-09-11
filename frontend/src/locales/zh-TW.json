@@ -466,6 +466,7 @@
     "purchase": {
       "paidNotSupported": "不支援購買付費應用程式",
       "unavailable": "項目暫時無法使用",
+      "licenseDeclined": "Apple 拒絕授予授權且未說明原因（5002）。通常先用該 Apple ID 在 App Store 取得一次這個 App 即可解決。",
       "passwordExpired": "密碼權杖已過期",
       "subscriptionRequired": "需要訂閱",
       "termsRequired": "您必須接受條款與約定：{{url}}",

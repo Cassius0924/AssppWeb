@@ -466,6 +466,7 @@
     "purchase": {
       "paidNotSupported": "Purchasing paid apps is not supported",
       "unavailable": "Item is temporarily unavailable",
+      "licenseDeclined": "Apple declined to grant a license and gave no reason (5002). Getting the app once from the App Store with this Apple ID usually clears it.",
       "passwordExpired": "Password token is expired",
       "subscriptionRequired": "Subscription required",
       "termsRequired": "You must accept the Terms & Conditions: {{url}}",
