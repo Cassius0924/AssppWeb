@@ -281,26 +281,41 @@ The settings endpoint (`/api/settings`) must never reflect request headers (`x-f
 - `customerMessage === 'Your password has changed.'`: Password token invalid
 - `action.url` ending in `termsPage`: Terms acceptance required (throw with URL)
 
-### Edge Throttling vs Application Errors
+### Sign-in Redirects Arrive Without a Location Header
 
-Apple's edge answers throttled requests itself, without involving the store
-application. It presents as a `301` with no `Location` header and a 162-byte
-HTML body, an empty `204`, a bare `403`, or a TCP `ECONNRESET` — and it is
-intermittent, so the same client succeeds minutes later.
+`buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate` answers a
+signed sign-in with a `301`/`302` whose `Location` header is absent, so the
+redirect cannot be followed and authentication dead-ends. The destination is
+still recoverable: the response names the account's pod in a `pod` header, and
+**the same authenticate path is served on the pod hosts** (verified against
+`p25-buy` and `p32-buy`, both of which reach MZFinance).
 
-Telling the two apart matters, because an application error is worth retrying
-and a throttled one is not. **Every response produced by the store application
-carries `x-apple-jingle-correlation-key`** (along with `x-responding-instance`,
-`pod`, `apple-seq`). A response missing it never reached MZFinance.
-`refusedByEdge()` in `frontend/src/apple/authenticate.ts` uses exactly that
-signal to raise `AuthThrottledError` and abandon the attempt loop instead of
-spending another request against the limit that just rejected it.
+`authenticate()` therefore takes an optional `pod` and addresses
+`p{pod}-buy.itunes.apple.com` from the start when the caller knows it; failing
+that, a Location-less redirect retries once against the host named by the `pod`
+response header. Always pass `account.pod` when re-authenticating an existing
+account.
 
-**Do not re-authenticate speculatively.** The authenticate endpoint is the
-throttled one. `acquireLicense()` purchases first and renews the token only
-when Apple reports it expired (`PurchaseError.tokenExpired`); renewing before
-every purchase sent one authenticate request per button press, which is what
-triggered the throttling in the first place.
+### Edge Responses vs Application Errors
+
+**Every response produced by the store application carries
+`x-apple-jingle-correlation-key`** (along with `x-responding-instance`, `pod`,
+`apple-seq`). A response missing it — an empty `204`, a bare `403`, an HTML
+error page — was synthesized at the edge and never reached MZFinance, so it
+holds nothing to act on and nothing a retry would change. `refusedByEdge()` in
+`frontend/src/apple/authenticate.ts` uses that signal to raise
+`AuthEndpointError` and end the attempt loop.
+
+This distinction is the first thing to check when a request fails in a way the
+protocol does not describe: compare the response header names against a known
+good response in the same log.
+
+**Do not re-authenticate speculatively.** `acquireLicense()` purchases first
+and renews the token only when Apple reports it expired
+(`PurchaseError.tokenExpired`, which covers `2034`/`2042` and the
+"Your password has changed." message). Renewing before every purchase sent one
+sign-in request per button press and, because the failure was swallowed, left
+the purchase running on a dead token and reporting a misleading `5002`.
 
 ## Testing
 

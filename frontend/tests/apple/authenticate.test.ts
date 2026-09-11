@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildPlist } from "../../src/apple/plist";
 import {
   authenticate,
-  AuthThrottledError,
+  AuthEndpointError,
 } from "../../src/apple/authenticate";
 import { appleRequest } from "../../src/apple/request";
 import { fetchBag } from "../../src/apple/bag";
@@ -71,7 +71,69 @@ describe("apple/authenticate", () => {
     } as any;
   }
 
-  it("reports edge throttling for a 301 without a Location header", async () => {
+  it("retries on the pod host when a redirect omits its Location", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest)
+      .mockResolvedValueOnce(
+        response({ status: 302, headers: { ...edgeHeaders, pod: "32" } }),
+      )
+      .mockResolvedValue(
+        response({
+          headers: appHeaders,
+          body: buildPlist({
+            accountInfo: { address: {} },
+            passwordToken: "token",
+            dsPersonId: "123",
+          }),
+        }),
+      );
+
+    const account = await authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+    );
+
+    expect(account.passwordToken).toBe("token");
+    expect(vi.mocked(appleRequest).mock.calls[1][0].host).toBe(
+      "p32-buy.itunes.apple.com",
+    );
+  });
+
+  it("addresses the pod host directly when the pod is already known", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest).mockResolvedValue(
+      response({
+        headers: appHeaders,
+        body: buildPlist({
+          accountInfo: { address: {} },
+          passwordToken: "token",
+          dsPersonId: "123",
+        }),
+      }),
+    );
+
+    await authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+      "32",
+    );
+
+    expect(vi.mocked(appleRequest).mock.calls[0][0].host).toBe(
+      "p32-buy.itunes.apple.com",
+    );
+  });
+
+  it("gives up when a redirect omits its Location and no pod is known", async () => {
     vi.mocked(fetchBag).mockResolvedValue({
       authURL: "https://buy.itunes.apple.com/authenticate",
     });
@@ -81,7 +143,7 @@ describe("apple/authenticate", () => {
 
     await expect(
       authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
-    ).rejects.toBeInstanceOf(AuthThrottledError);
+    ).rejects.toBeInstanceOf(AuthEndpointError);
 
     // Retrying would spend another request against the limit that just rejected us.
     expect(appleRequest).toHaveBeenCalledTimes(1);
@@ -97,16 +159,16 @@ describe("apple/authenticate", () => {
 
     await expect(
       authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
-    ).rejects.toBeInstanceOf(AuthThrottledError);
+    ).rejects.toBeInstanceOf(AuthEndpointError);
     expect(appleRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the original error when the store application answered", async () => {
+  it("keeps retrying when the store application itself answered", async () => {
     vi.mocked(fetchBag).mockResolvedValue({
       authURL: "https://buy.itunes.apple.com/authenticate",
     });
     vi.mocked(appleRequest).mockResolvedValue(
-      response({ status: 302, headers: appHeaders }),
+      response({ status: 403, headers: appHeaders }),
     );
 
     const error = await authenticate(
@@ -117,8 +179,9 @@ describe("apple/authenticate", () => {
       "aabb",
     ).catch((e) => e);
 
-    expect(error).not.toBeInstanceOf(AuthThrottledError);
-    // A real application response still gets the existing two attempts.
+    // An application response means the request landed; the flow keeps its
+    // existing two attempts rather than treating it as an edge refusal.
+    expect(error).not.toBeInstanceOf(AuthEndpointError);
     expect(appleRequest).toHaveBeenCalledTimes(2);
   });
 

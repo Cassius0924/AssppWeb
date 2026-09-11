@@ -477,7 +477,7 @@
       "requiresVerification": "驗證需要雙重認證代碼。如果沒有彈出驗證碼，請嘗試在 https://account.apple.com 登入以觸發提示，然後在雙重認證代碼欄位中填寫該代碼。",
       "redirectLocation": "無法取得重新導向位址",
       "emptyBody": "認證失敗：伺服器傳回 HTTP {{status}} 且回應主體為空",
-      "throttled": "Apple 暫時拒絕了此裝置的登入請求。請等待幾分鐘後再試。",
+      "endpointRefused": "Apple 拒絕了登入請求，且未回傳可處理的回應（HTTP {{status}}）。請等待幾分鐘後再試。",
       "missingAccountInfo": "回應中缺少 accountInfo",
       "missingAddress": "回應中缺少 address",
       "unknownReason": "未知原因導致認證失敗"

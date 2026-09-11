@@ -104,6 +104,7 @@ export function useDownloadAction() {
         undefined,
         account.cookies,
         account.deviceIdentifier,
+        account.pod,
       );
       await updateAccount(renewed);
       currentAccount = renewed;

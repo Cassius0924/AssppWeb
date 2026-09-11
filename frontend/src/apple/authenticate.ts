@@ -3,6 +3,7 @@ import { appleRequest } from './request';
 import { buildPlist, parsePlist } from './plist';
 import { extractAndMergeCookies } from './cookies';
 import { fetchBag, defaultAuthURL } from './bag';
+import { storeAPIHost } from './config';
 import { signAuthBody } from './sap/client';
 import { createLogger } from '../utils/logger';
 import type { Account, Cookie } from '../types';
@@ -19,22 +20,22 @@ export class AuthenticationError extends Error {
   }
 }
 
-/** Apple's edge refused the request before it reached the store application. */
-export class AuthThrottledError extends Error {
+/** Apple answered without a response the sign-in flow can act on. */
+export class AuthEndpointError extends Error {
   constructor(
     message: string,
     public readonly status: number,
   ) {
     super(message);
-    this.name = 'AuthThrottledError';
+    this.name = 'AuthEndpointError';
   }
 }
 
 // Every response produced by Apple's store application carries a Jingle
-// correlation key. Responses without one (a 301 with no Location, an empty
-// 204, a bare 403) were synthesized by the edge, which is how its anti-abuse
-// throttling presents itself. Retrying those immediately only digs deeper, so
-// they end the attempt loop instead of consuming one of its retries.
+// correlation key. Responses without one — a 3xx with no Location, an empty
+// 204, a bare 403 — were synthesized at the edge and hold nothing to act on,
+// so they end the attempt loop rather than consuming another retry against a
+// host that just produced one.
 function refusedByEdge(headers: Record<string, string>): boolean {
   return !('x-apple-jingle-correlation-key' in headers);
 }
@@ -45,6 +46,7 @@ export async function authenticate(
   code?: string,
   existingCookies?: Cookie[],
   deviceId: string = '',
+  pod?: string,
 ): Promise<Account> {
   let cookies: Cookie[] = existingCookies ? [...existingCookies] : [];
   let storeFront = '';
@@ -61,6 +63,16 @@ export async function authenticate(
   requestHost = authEndpoint.hostname;
   requestPath = `${authEndpoint.pathname}${authEndpoint.search}`;
 
+  // The generic store host answers a signed sign-in with a redirect to the
+  // account's pod, but that response arrives without a Location header and so
+  // cannot be followed. Once the pod is known, address it directly — the same
+  // path is served there.
+  let podHost = '';
+  if (pod) {
+    podHost = storeAPIHost(pod);
+    requestHost = podHost;
+  }
+
   log.info('authentication started', {
     host: requestHost,
     path: authEndpoint.pathname,
@@ -68,6 +80,7 @@ export async function authenticate(
     withCode: Boolean(code),
     cookieCount: cookies.length,
     sapRequired: Boolean(bag.sap),
+    pod: pod || undefined,
   });
 
   let currentAttempt = 0;
@@ -133,22 +146,40 @@ export async function authenticate(
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers['location'];
         if (!location) {
-          const throttled = refusedByEdge(response.headers);
+          // Apple names the pod in a response header even when it omits the
+          // Location it is redirecting to, so the destination is recoverable.
+          const advertisedPod = response.headers['pod'] || pod;
+          const target = advertisedPod ? storeAPIHost(advertisedPod) : '';
+          if (target && target !== requestHost) {
+            log.warn('redirect without Location; retrying on the pod host', {
+              from: requestHost,
+              to: target,
+              status: response.status,
+              pod: advertisedPod,
+            });
+            podHost = target;
+            requestHost = target;
+            currentAttempt--;
+            redirectAttempt++;
+            continue;
+          }
+
           log.error('redirect without a Location header', {
             host: requestHost,
             path: requestPath,
             status: response.status,
-            responseHeaders: Object.keys(response.headers),
+            // Full pairs, not just names: this is the response that decides
+            // whether the destination is recoverable at all.
+            headers: response.headers,
+            bodyPreview: response.body.slice(0, 200),
             attempt: currentAttempt,
             redirectAttempt,
-            throttled,
+            refusedByEdge: refusedByEdge(response.headers),
           });
-          throw throttled
-            ? new AuthThrottledError(
-                i18n.t('errors.auth.throttled'),
-                response.status,
-              )
-            : new Error(i18n.t('errors.auth.redirectLocation'));
+          throw new AuthEndpointError(
+            i18n.t('errors.auth.endpointRefused', { status: response.status }),
+            response.status,
+          );
         }
         log.info('following redirect', {
           from: requestHost,
@@ -176,8 +207,8 @@ export async function authenticate(
           throttled,
         });
         throw throttled
-          ? new AuthThrottledError(
-              i18n.t('errors.auth.throttled'),
+          ? new AuthEndpointError(
+              i18n.t('errors.auth.endpointRefused', { status: response.status }),
               response.status,
             )
           : new Error(
@@ -201,8 +232,8 @@ export async function authenticate(
           error: parseError,
         });
         throw throttled
-          ? new AuthThrottledError(
-              i18n.t('errors.auth.throttled'),
+          ? new AuthEndpointError(
+              i18n.t('errors.auth.endpointRefused', { status: response.status }),
               response.status,
             )
           : parseError;
@@ -267,13 +298,13 @@ export async function authenticate(
       return account;
     } catch (e) {
       if (e instanceof AuthenticationError) throw e;
-      // Surface throttling immediately: a second attempt would be one more
-      // request against the limit that just rejected us.
-      if (e instanceof AuthThrottledError) {
-        log.error('authentication refused by Apple edge', {
+      // Nothing in an edge-synthesized response changes on a retry.
+      if (e instanceof AuthEndpointError) {
+        log.error('authentication refused without a usable response', {
           host: requestHost,
           status: e.status,
           attempt: currentAttempt,
+          podHost: podHost || undefined,
         });
         throw e;
       }
