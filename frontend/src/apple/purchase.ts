@@ -3,7 +3,10 @@ import { appleRequest } from "./request";
 import { buildPlist, parsePlist } from "./plist";
 import { extractAndMergeCookies } from "./cookies";
 import { purchaseAPIHost } from "./config";
+import { createLogger } from "../utils/logger";
 import i18n from "../i18n";
+
+const log = createLogger("apple:purchase");
 
 export class PurchaseError extends Error {
   constructor(
@@ -23,13 +26,28 @@ export async function purchaseApp(
     throw new PurchaseError(i18n.t("errors.purchase.paidNotSupported"));
   }
 
+  log.info("acquiring license", {
+    bundleId: app.bundleID,
+    trackId: app.id,
+    store: account.store,
+    pod: account.pod,
+  });
+
   try {
     return await purchaseWithParams(account, app, "STDQ");
   } catch (e) {
     // Rely on error code instead of translated message string to prevent matching issues
     if (e instanceof PurchaseError && e.code === "2059") {
+      log.info("retrying license with GAME pricing", {
+        bundleId: app.bundleID,
+      });
       return await purchaseWithParams(account, app, "GAME");
     }
+    log.warn("license acquisition failed", {
+      bundleId: app.bundleID,
+      code: e instanceof PurchaseError ? e.code : undefined,
+      error: e,
+    });
     throw e;
   }
 }
@@ -87,6 +105,13 @@ async function purchaseWithParams(
   if (dict.failureType) {
     const failureType = String(dict.failureType);
     const customerMessage = dict.customerMessage as string | undefined;
+    log.warn("purchase returned a failure", {
+      bundleId: app.bundleID,
+      pricingParameters,
+      failureType,
+      customerMessage,
+      status: response.status,
+    });
     switch (failureType) {
       case "2059":
         throw new PurchaseError(i18n.t("errors.purchase.unavailable"), "2059");

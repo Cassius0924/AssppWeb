@@ -26,6 +26,15 @@ declare module "@mercuryworkshop/wisp-js/server" {
     wisp_motd: string | null;
   }
 
+  export const logging: {
+    DEBUG: number;
+    INFO: number;
+    WARN: number;
+    ERROR: number;
+    NONE: number;
+    set_level(level: number): void;
+  };
+
   export const server: {
     options: WispOptions;
     routeRequest(

@@ -17,8 +17,10 @@ import {
   requireAccountHash,
   verifyTaskOwnership,
 } from "../utils/route.js";
+import { createLogger } from "../utils/logger.js";
 
 const router = Router();
+const log = createLogger("downloads");
 
 async function fetchDownloadSizeBytes(
   downloadURL: string,
@@ -116,10 +118,9 @@ router.post("/downloads", async (req: Request, res: Response) => {
         return;
       }
     } catch (err) {
-      console.error(
-        "Apple size probe error:",
-        err instanceof Error ? err.message : err,
-      );
+      log.error("size probe failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       res.status(502).json({ error: "Failed to verify file size from Apple" });
       return;
     }
@@ -133,12 +134,20 @@ router.post("/downloads", async (req: Request, res: Response) => {
       sinfs,
       iTunesMetadata,
     );
+    log.info("download task created", {
+      task: task.id,
+      bundleId: software?.bundleID,
+      version: software?.version,
+      account: accountHash,
+      sinfCount: Array.isArray(sinfs) ? sinfs.length : 0,
+      hasMetadata: Boolean(iTunesMetadata),
+    });
     res.status(201).json(sanitizeTaskForResponse(task));
   } catch (err) {
-    console.error(
-      "Create download error:",
-      err instanceof Error ? err.message : err,
-    );
+    log.error("download task creation failed", {
+      account: accountHash,
+      error: err instanceof Error ? err.message : String(err),
+    });
     res.status(400).json({ error: "Failed to create download" });
   }
 });

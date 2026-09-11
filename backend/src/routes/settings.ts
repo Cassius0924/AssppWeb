@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { config, DOWNLOAD_THREADS } from "../config.js";
+import { getLogLevel, logDirectory } from "../utils/logger.js";
 
 const router = Router();
 const startedAt = Date.now();
@@ -17,6 +18,13 @@ router.get("/settings", (_req: Request, res: Response) => {
     autoCleanupMaxMB: config.autoCleanupMaxMB,
     maxDownloadMB: config.maxDownloadMB,
     downloadThreads: DOWNLOAD_THREADS,
+    logLevel: getLogLevel(),
+    logFormat: config.logFormat,
+    logDir: logDirectory(),
+    logMaxFileMB: config.logMaxFileMB,
+    logMaxFiles: config.logMaxFiles,
+    clientLogsEnabled: config.clientLogsEnabled,
+    logsApiEnabled: config.logsApiEnabled,
   });
 });
 

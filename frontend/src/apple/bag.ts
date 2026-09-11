@@ -1,7 +1,10 @@
 import { authHeaders } from '../api/client';
 import { parsePlist } from './plist';
 import { sapEndpoints, SapConfigurationError } from './sap/protocol';
+import { createLogger } from '../utils/logger';
 import type { SapEndpoints } from './sap/protocol';
+
+const log = createLogger('apple:bag');
 
 export interface BagOutput {
   authURL: string;
@@ -44,9 +47,11 @@ export async function fetchBag(deviceId: string): Promise<BagOutput> {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      console.warn(
-        `[Bag] Proxy request failed, using default auth endpoint: ${err.error || `HTTP ${resp.status}`}`,
-      );
+      log.warn('proxy request failed, using default auth endpoint', {
+        status: resp.status,
+        error: err.error || `HTTP ${resp.status}`,
+        fallback: defaultAuthURL,
+      });
       return { authURL: defaultAuthURL };
     }
 
@@ -62,20 +67,30 @@ export async function fetchBag(deviceId: string): Promise<BagOutput> {
       (urlBag?.authenticateAccount as string | undefined);
 
     if (!authURL) {
-      console.warn(
-        '[Bag] authenticateAccount URL not found in bag, using default auth endpoint',
-      );
+      log.warn('authenticateAccount missing from bag, using default endpoint', {
+        bytes: xml.length,
+        fallback: defaultAuthURL,
+        sapConfigured: Boolean(sap),
+      });
       return { authURL: defaultAuthURL, sap };
     }
 
-    return { authURL: normalizeAuthURL(authURL), sap };
+    const resolved = normalizeAuthURL(authURL);
+    log.info('bag resolved', {
+      bytes: xml.length,
+      authURL: resolved,
+      normalized: resolved !== authURL,
+      sapConfigured: Boolean(sap),
+      sapSetupURL: sap?.setupURL,
+      sapCertificateURL: sap?.certificateURL,
+    });
+    return { authURL: resolved, sap };
   } catch (error) {
     if (error instanceof SapConfigurationError) throw error;
-    console.warn(
-      `[Bag] Failed to fetch/parse bag, using default auth endpoint: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    log.warn('failed to fetch/parse bag, using default auth endpoint', {
+      error,
+      fallback: defaultAuthURL,
+    });
     return { authURL: defaultAuthURL };
   }
 }

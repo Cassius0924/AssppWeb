@@ -4,7 +4,10 @@ import { buildPlist, parsePlist } from './plist';
 import { extractAndMergeCookies } from './cookies';
 import { fetchBag, defaultAuthURL } from './bag';
 import { signAuthBody } from './sap/client';
+import { createLogger } from '../utils/logger';
 import type { Account, Cookie } from '../types';
+
+const log = createLogger('apple:auth');
 
 export class AuthenticationError extends Error {
   constructor(
@@ -38,6 +41,15 @@ export async function authenticate(
   requestHost = authEndpoint.hostname;
   requestPath = `${authEndpoint.pathname}${authEndpoint.search}`;
 
+  log.info('authentication started', {
+    host: requestHost,
+    path: authEndpoint.pathname,
+    guid: deviceId,
+    withCode: Boolean(code),
+    reusingCookies: cookies.length,
+    sapRequired: Boolean(bag.sap),
+  });
+
   let currentAttempt = 0;
   let redirectAttempt = 0;
 
@@ -63,11 +75,13 @@ export async function authenticate(
       if (bag.sap) {
         // Sign the exact UTF-8 body sent below, including this attempt's 2FA code.
         // Signing stays inside the browser; no server ever receives these bytes.
-        headers['X-Apple-ActionSignature'] = await signAuthBody(
-          deviceId,
-          bag.sap,
-          plistBody,
-        );
+        const signature = await signAuthBody(deviceId, bag.sap, plistBody);
+        headers['X-Apple-ActionSignature'] = signature;
+        // The signature itself is a credential; only its size is diagnostic.
+        log.debug('request signed', {
+          signatureLength: signature.length,
+          bodyLength: plistBody.length,
+        });
       }
 
       const response = await appleRequest({
@@ -99,8 +113,21 @@ export async function authenticate(
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers['location'];
         if (!location) {
+          log.error('redirect without a Location header', {
+            host: requestHost,
+            path: requestPath,
+            status: response.status,
+            responseHeaders: Object.keys(response.headers),
+            attempt: currentAttempt,
+            redirectAttempt,
+          });
           throw new Error(i18n.t('errors.auth.redirectLocation'));
         }
+        log.info('following redirect', {
+          from: requestHost,
+          status: response.status,
+          location,
+        });
         const url = new URL(location);
         requestHost = url.hostname;
         requestPath = url.pathname + url.search;
@@ -111,12 +138,34 @@ export async function authenticate(
 
       // Handle non-plist responses (e.g. 403 with empty body)
       if (!response.body.trim()) {
+        log.error('empty response body', {
+          host: requestHost,
+          path: requestPath,
+          status: response.status,
+          responseHeaders: Object.keys(response.headers),
+          signed: Boolean(bag.sap),
+          attempt: currentAttempt,
+        });
         throw new Error(
           i18n.t('errors.auth.emptyBody', { status: response.status }),
         );
       }
 
-      const dict = parsePlist(response.body) as Record<string, any>;
+      let dict: Record<string, any>;
+      try {
+        dict = parsePlist(response.body) as Record<string, any>;
+      } catch (parseError) {
+        log.error('response was not a plist', {
+          host: requestHost,
+          path: requestPath,
+          status: response.status,
+          contentType: response.headers['content-type'],
+          bodyBytes: response.body.length,
+          signed: Boolean(bag.sap),
+          error: parseError,
+        });
+        throw parseError;
+      }
 
       // Check for 2FA requirement
       if (
@@ -124,6 +173,7 @@ export async function authenticate(
         !code &&
         dict.customerMessage === 'MZFinance.BadLogin.Configurator_message'
       ) {
+        log.info('two-factor verification required', { host: requestHost });
         throw new AuthenticationError(
           i18n.t('errors.auth.requiresVerification'),
           true,
@@ -136,6 +186,12 @@ export async function authenticate(
 
       const accountInfo = dict.accountInfo as Record<string, any>;
       if (!accountInfo) {
+        log.error('response carried no accountInfo', {
+          host: requestHost,
+          status: response.status,
+          failureType: dict.failureType,
+          customerMessage: failureMessage,
+        });
         throw new Error(
           failureMessage ?? i18n.t('errors.auth.missingAccountInfo'),
         );
@@ -160,12 +216,31 @@ export async function authenticate(
         pod,
       };
 
+      log.info('authentication succeeded', {
+        host: requestHost,
+        storeFront,
+        pod,
+        attempts: currentAttempt,
+        redirects: redirectAttempt,
+      });
       return account;
     } catch (e) {
       if (e instanceof AuthenticationError) throw e;
       lastError = e instanceof Error ? e : new Error(String(e));
+      log.warn('authentication attempt failed', {
+        host: requestHost,
+        attempt: currentAttempt,
+        redirectAttempt,
+        error: lastError,
+      });
     }
   }
 
+  log.error('authentication gave up', {
+    host: requestHost,
+    attempts: currentAttempt,
+    redirects: redirectAttempt,
+    error: lastError,
+  });
   throw lastError ?? new Error(i18n.t('errors.auth.unknownReason'));
 }

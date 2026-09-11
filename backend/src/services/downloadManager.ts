@@ -1,14 +1,16 @@
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { config, DOWNLOAD_TIMEOUT_MS } from "../config.js";
+import { config, DOWNLOAD_THREADS, DOWNLOAD_TIMEOUT_MS } from "../config.js";
 import { inject } from "./sinfInjector.js";
 import { ChunkedDownloader } from "./chunkedDownloader.js";
 import type { DownloadTask, Software, Sinf } from "../types/index.js";
+import { createLogger } from "../utils/logger.js";
 
 const tasks = new Map<string, DownloadTask>();
 const abortControllers = new Map<string, AbortController>();
 const chunkDownloaders = new Map<string, ChunkedDownloader>();
+const log = createLogger("download");
 const progressListeners = new Map<string, Set<(task: DownloadTask) => void>>();
 
 const PACKAGES_DIR = path.join(config.dataDir, "packages");
@@ -118,7 +120,7 @@ export function runTimeCleanup() {
   }
 
   for (const id of expiredIds) {
-    console.log(`[Cleanup] Deleting expired task: ${id}`);
+    log.info("deleting expired package", { task: id, reason: "age" });
     deleteTask(id);
   }
 }
@@ -152,7 +154,12 @@ export function runSpaceCleanup() {
 
   fileTasks.sort((a, b) => a.mtimeMs - b.mtimeMs);
   for (const ft of fileTasks) {
-    console.log(`[Cleanup] Space limit exceeded, deleting task: ${ft.id}`);
+    log.info("deleting package to reclaim space", {
+      task: ft.id,
+      bytes: ft.size,
+      totalBytes,
+      limitBytes: maxBytes,
+    });
     deleteTask(ft.id);
     totalBytes -= ft.size;
     if (totalBytes <= maxBytes) break;
@@ -313,6 +320,8 @@ export function deleteTask(id: string): boolean {
   const task = tasks.get(id);
   if (!task) return false;
 
+  log.info("deleting download task", { task: id, status: task.status });
+
   // Abort if downloading
   const controller = abortControllers.get(id);
   if (controller) {
@@ -359,6 +368,8 @@ export function pauseTask(id: string): boolean {
   const task = tasks.get(id);
   if (!task || task.status !== "downloading") return false;
 
+  log.info("download paused", { task: id, progress: task.progress });
+
   const controller = abortControllers.get(id);
   if (controller) {
     controller.abort();
@@ -379,6 +390,7 @@ export function resumeTask(id: string): boolean {
   const task = tasks.get(id);
   if (!task || task.status !== "paused") return false;
 
+  log.info("download resumed", { task: id, progress: task.progress });
   startDownload(task);
   return true;
 }
@@ -421,6 +433,7 @@ async function startDownload(task: DownloadTask) {
   runTimeCleanup();
   runSpaceCleanup();
 
+  const startedAtMs = Date.now();
   const controller = new AbortController();
   abortControllers.set(task.id, controller);
 
@@ -432,6 +445,14 @@ async function startDownload(task: DownloadTask) {
   task.speed = "0 B/s";
   task.error = undefined;
   notifyProgress(task);
+
+  log.info("download started", {
+    task: task.id,
+    bundleId: task.software.bundleID,
+    version: task.software.version,
+    account: task.accountHash,
+    threads: DOWNLOAD_THREADS,
+  });
 
   // Sanitize path segments
   const safeAccountHash = safePathSegment(task.accountHash, "accountHash");
@@ -451,6 +472,10 @@ async function startDownload(task: DownloadTask) {
   if (!resolvedDir.startsWith(packagesBase + path.sep)) {
     task.status = "failed";
     task.error = "Invalid path";
+    log.error("refusing to write outside the packages directory", {
+      task: task.id,
+      resolvedDir,
+    });
     clearTimeout(timeout);
     notifyProgress(task);
     return;
@@ -488,8 +513,21 @@ async function startDownload(task: DownloadTask) {
       task.progress = 100;
       notifyProgress(task);
 
+      log.info("injecting sinfs", {
+        task: task.id,
+        sinfCount: task.sinfs.length,
+        hasMetadata: Boolean(task.iTunesMetadata),
+      });
       await inject(task.sinfs, filePath, task.iTunesMetadata);
     }
+
+    log.info("download completed", {
+      task: task.id,
+      bundleId: task.software.bundleID,
+      version: task.software.version,
+      bytes: fs.existsSync(filePath) ? fs.statSync(filePath).size : undefined,
+      durationMs: Date.now() - startedAtMs,
+    });
 
     task.status = "completed";
     task.progress = 100;
@@ -512,15 +550,21 @@ async function startDownload(task: DownloadTask) {
       if ((task.status as string) === "paused") return;
       task.status = "failed";
       task.error = "Download timed out";
+      log.error("download timed out", {
+        task: task.id,
+        bundleId: task.software.bundleID,
+        durationMs: Date.now() - startedAtMs,
+      });
       notifyProgress(task);
       return;
     }
 
     task.status = "failed";
-    console.error(
-      `Download ${task.id} failed:`,
-      err instanceof Error ? err.message : err,
-    );
+    log.error("download failed", {
+      task: task.id,
+      bundleId: task.software.bundleID,
+      error: err instanceof Error ? err.message : String(err),
+    });
     task.error = "Download failed";
     notifyProgress(task);
   }

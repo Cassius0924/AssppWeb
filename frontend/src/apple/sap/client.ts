@@ -1,8 +1,11 @@
 import { useSapStore } from '../../store/sap';
 import { loadAssets } from './assets';
 import { exchangeCertificate, fetchCertificate } from './protocol';
+import { createLogger } from '../../utils/logger';
 import type { SapEndpoints } from './protocol';
 import type { WorkerReply, WorkerRequest } from './worker';
+
+const log = createLogger('apple:sap');
 
 type Command = WorkerRequest extends infer Request
   ? Request extends { id: number }
@@ -89,25 +92,51 @@ async function prepare(
     clearSigningSession();
     const signer = new Signer();
     const ready = (async () => {
+      const startedAt = Date.now();
       const update = useSapStore.getState().update;
       update('assets');
+      log.info('signing session starting', {
+        setupURL: endpoints.setupURL,
+        certificateURL: endpoints.certificateURL,
+        version: endpoints.version,
+      });
+
       const assets = await loadAssets((percent) => update('assets', percent));
+      log.debug('assets loaded', {
+        count: Object.keys(assets).length,
+        durationMs: Date.now() - startedAt,
+      });
+
       update('initializing');
       await signer.request({ type: 'open', device, assets });
+      log.debug('emulator initialized', { durationMs: Date.now() - startedAt });
+
       const certificate = await fetchCertificate(endpoints);
       const first = await signer.request({
         type: 'exchange',
         bytes: certificate,
       });
+      log.debug('certificate exchanged', {
+        certificateBytes: certificate.length,
+        state: first.state,
+        replyBytes: first.bytes?.length ?? 0,
+      });
       if (first.state !== 1 || !first.bytes?.length)
         throw new Error('Unexpected SAP setup state');
+
       const response = await exchangeCertificate(endpoints, first.bytes);
       const second = await signer.request({
         type: 'exchange',
         bytes: response,
       });
+      log.debug('setup exchange completed', {
+        responseBytes: response.length,
+        state: second.state,
+      });
       if (second.state !== 0) throw new Error('SAP setup did not complete');
+
       update('ready');
+      log.info('signing session ready', { durationMs: Date.now() - startedAt });
     })();
     active = { key, signer, ready };
   }
@@ -126,7 +155,13 @@ export function signAuthBody(
     const bytes = new TextEncoder().encode(body);
     try {
       const signer = await prepare(device, endpoints);
+      const startedAt = Date.now();
       const result = await signer.request({ type: 'sign', bytes });
+      log.debug('body signed', {
+        inputBytes: bytes.length,
+        signatureBytes: result.bytes?.length ?? 0,
+        durationMs: Date.now() - startedAt,
+      });
       if (!result.bytes?.length || result.bytes.length > 65536)
         throw new Error('Invalid Apple signature');
       let binary = '';
@@ -134,6 +169,7 @@ export function signAuthBody(
       idleTimer = setTimeout(clearSigningSession, IDLE_LIFETIME);
       return btoa(binary);
     } catch (error) {
+      log.error('signing failed', { error });
       clearSigningSession();
       useSapStore.getState().update('error');
       throw error;

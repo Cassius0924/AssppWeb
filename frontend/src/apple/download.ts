@@ -7,7 +7,10 @@ import {
   redownloadEndpoint,
   volumeStoreEndpoint,
 } from "./config";
+import { createLogger } from "../utils/logger";
 import i18n from "../i18n";
+
+const log = createLogger("apple:download");
 
 export class DownloadError extends Error {
   constructor(
@@ -27,6 +30,13 @@ export async function getDownloadInfo(
   const deviceId = account.deviceIdentifier;
 
   let endpoint = volumeStoreEndpoint(account.pod, deviceId);
+  log.info("requesting download info", {
+    bundleId: app.bundleID,
+    trackId: app.id,
+    host: endpoint.host,
+    pod: account.pod,
+    externalVersionId,
+  });
   let requestHost = endpoint.host;
   let requestPath = endpoint.path;
   let triedRedownload = false;
@@ -66,6 +76,12 @@ export async function getDownloadInfo(
     if (response.status === 302) {
       const location = response.headers["location"];
       if (!location) {
+        log.error("redirect without a Location header", {
+          host: requestHost,
+          status: response.status,
+          responseHeaders: Object.keys(response.headers),
+          redirectAttempt,
+        });
         throw new DownloadError(i18n.t("errors.download.redirectLocation"));
       }
       const url = new URL(location);
@@ -83,6 +99,10 @@ export async function getDownloadInfo(
       // volumeStore intermittently returns 5002; retry once via the
       // redownload dispatch endpoint, which serves the same payload.
       if (failureType === RETRYABLE_FAILURE_TYPE && !triedRedownload) {
+        log.info("retrying via the redownload dispatch endpoint", {
+          bundleId: app.bundleID,
+          failureType,
+        });
         triedRedownload = true;
         endpoint = redownloadEndpoint(deviceId);
         requestHost = endpoint.host;
@@ -92,6 +112,12 @@ export async function getDownloadInfo(
       }
 
       const customerMessage = dict.customerMessage as string | undefined;
+      log.warn("download info returned a failure", {
+        bundleId: app.bundleID,
+        host: requestHost,
+        failureType,
+        customerMessage,
+      });
       switch (failureType) {
         case "2034":
         case "2042":
@@ -177,6 +203,15 @@ export async function getDownloadInfo(
     delete metadataDict["passwordToken"];
     const iTunesMetadata = base64FromString(buildPlist(metadataDict));
 
+    log.info("download info resolved", {
+      bundleId: app.bundleID,
+      version,
+      bundleVersion,
+      sinfCount: sinfs.length,
+      downloadHost: safeHost(url),
+      redirects: redirectAttempt,
+    });
+
     return {
       output: {
         downloadURL: url,
@@ -190,6 +225,15 @@ export async function getDownloadInfo(
   }
 
   throw new DownloadError(i18n.t("errors.download.tooManyRedirects"));
+}
+
+/** CDN URLs carry signed query parameters, so only the host is logged. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "invalid";
+  }
 }
 
 function base64FromString(value: string): string {

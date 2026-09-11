@@ -128,6 +128,9 @@ The backend proxies the bag endpoint via `GET /api/bag?guid=<deviceId>` using No
 ### Backend Shared Utilities
 
 - `backend/src/utils/route.ts` — shared Express route helpers (`getIdParam`, `requireAccountHash`, `verifyTaskOwnership`)
+- `backend/src/utils/logger.ts` — structured logger (`createLogger(scope)`), redaction, in-memory ring buffer, `queryLogs()`
+- `backend/src/utils/logFile.ts` — `RotatingFileWriter`, size-based rotation with synchronous appends
+- `backend/src/utils/consoleBridge.ts` — funnels third-party `console.*` output (wisp-js) into the structured logger
 - `backend/src/config.ts` — centralized constants (`MAX_DOWNLOAD_SIZE`, `DOWNLOAD_TIMEOUT_MS`, `BAG_TIMEOUT_MS`, `BAG_MAX_BYTES`, `MIN_ACCOUNT_HASH_LENGTH`) and env-var config (`disableHttpsRedirect` via `UNSAFE_DANGEROUSLY_DISABLE_HTTPS_REDIRECT`)
 
 ## Frontend
@@ -157,6 +160,7 @@ The backend proxies the bag endpoint via `GET /api/bag?guid=<deviceId>` using No
 ### Frontend Shared Utilities (`utils/`)
 
 - `utils/error.ts` — `getErrorMessage(e, fallback)` for standardized catch-block error extraction
+- `utils/logger.ts` — browser logger (`createLogger(scope)`), redaction, ring buffer, optional forwarding to `/api/client-logs`
 - `utils/crypto.ts` — AES-GCM encrypt/decrypt for account export/import
 - `utils/account.ts` — `accountHash()`, `accountStoreCountry()`, `firstAccountCountry()`
 
@@ -178,6 +182,69 @@ The backend proxies the bag endpoint via `GET /api/bag?guid=<deviceId>` using No
 - Putting config before utilities
 - Putting type imports in the middle instead of last
 
+## Logging
+
+Both halves of the app log through a shared design: leveled, scoped, structured, and redacted. See `backend/src/utils/logger.ts` and `frontend/src/utils/logger.ts`.
+
+### Levels and scopes
+
+Levels are `error` < `warn` < `info` < `debug` < `trace`. Every record carries a scope so a flow can be followed end to end:
+
+| Scope | Source |
+| --- | --- |
+| `server` | startup, shutdown, uncaught errors |
+| `http:req` | request access log (`requestLogger` middleware) |
+| `http:error` | the Express error handler |
+| `wisp` | wisp-js proxy output, bridged from `console.*` |
+| `bag` | `GET /api/bag` proxy |
+| `itunes` | search/lookup upstream calls |
+| `download` | task lifecycle, cleanup, SINF injection |
+| `logs` | the logging endpoints themselves |
+| `client:*` | browser entries, e.g. `client:apple:auth` |
+| `apple:*` | browser-side protocol scopes (`apple:request`, `apple:auth`, `apple:bag`, `apple:sap`, `apple:purchase`, `apple:download`) |
+
+Each HTTP request gets an 8-char `requestId`, returned as the `X-Request-Id` response header and attached to every line via `req.log`.
+
+### Redaction (both sides)
+
+Field keys are normalized (lowercased, non-letters stripped) and dropped when they match the shared list — `password`, `passwordToken`, any `*token`/`*secret`/`*signature`/`*apikey` suffix, anything containing `cookie`, plus `authorization`, `dsid`, `dsPersonId`, `directoryServicesIdentifier`, `sinf(s)`, `iTunesMetadata`, `otp`, `verificationCode`. Email addresses in any string value are masked (`s******@example.com`), strings over 512 chars are truncated, and nesting is capped.
+
+**Rule for new log calls**: log the *shape* of a credential, never the value — `signatureLength`, `bodyBytes`, `Object.keys(headers)`, `bodyKind(body)`. Response bodies are never logged verbatim; `apple/request.ts` classifies them as `plist`/`html`/`json`/`empty`/`other` instead.
+
+### Transports
+
+- **stdout** — `pretty` by default, `json` when `LOG_FORMAT=json`. Errors go to stderr.
+- **File** — always JSON lines at `DATA_DIR/logs/asspp.log`, rotated by size (`asspp.log.1` … `.N`). Writes are synchronous so the lines just before a crash survive.
+- **Ring buffer** — the last 2000 records, used by `GET /api/logs` when file logging is off.
+
+### Endpoints
+
+- `GET /api/logs?level=&scope=&q=&since=&limit=` — newest first; reads the log file, falling back to the ring buffer. Disable with `LOGS_API=false`.
+- `POST /api/client-logs` — browser batches (`{ session, entries[] }`). Capped at 200 entries and 256 KB per request, rate limited per IP+session, and re-redacted server-side so a malicious caller cannot park credentials in the log file. Disable with `CLIENT_LOGS=false`.
+
+Both live under `/api`, so `ACCESS_PASSWORD` protects them when it is set.
+
+### Environment variables
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` / `trace` |
+| `LOG_FORMAT` | `pretty` | `pretty` or `json` for stdout |
+| `LOG_TO_FILE` | `true` | `false` disables the rotating file |
+| `LOG_DIR` | `DATA_DIR/logs` | log file directory |
+| `LOG_MAX_FILE_MB` | `16` | rotation threshold (1–1024) |
+| `LOG_MAX_FILES` | `5` | rotated generations kept (1–50) |
+| `LOGS_API` | `true` | `false` disables `GET /api/logs` |
+| `CLIENT_LOGS` | `true` | `false` rejects `POST /api/client-logs` |
+
+The wisp-js level tracks `LOG_LEVEL`, so `LOG_LEVEL=debug` also turns on per-stream proxy detail.
+
+### Browser side
+
+Browser logging is configured per browser in Settings → Logging & Diagnostics, persisted in `localStorage` under `asspp-logging`. Forwarding to the server is **off by default** and must be opted into; with it off, entries stay in a 500-entry ring buffer that can be exported as NDJSON. Batches flush every 2s, at 20 queued entries, and on `pagehide`/tab hide; a 403 or 429 parks forwarding for a minute.
+
+**Why this matters**: Apple TLS terminates in the browser, so authentication, SAP signing, purchase, and download-info failures leave no trace server-side. Turning forwarding on is the only way those land next to the proxy and download logs.
+
 ## Security Model
 
 ### Account Hash Is Public
@@ -192,6 +259,10 @@ The backend proxies the bag endpoint via `GET /api/bag?guid=<deviceId>` using No
 ### Browser as Security Boundary
 
 Credentials (passwords, `passwordToken`, cookies) stored in IndexedDB are protected by the browser's same-origin policy. Encrypting them at rest would be security theater — the decryption key would also live in JS. The threat model assumes the browser environment is trusted; if an attacker has XSS, they can exfiltrate credentials regardless of at-rest encryption.
+
+### Logs Are Metadata, Not Credentials
+
+Server logs record connection and request metadata: client IPs, Apple hostnames contacted, status codes, sizes, timings. They never record Apple credentials — the redaction list above applies to backend fields and to anything arriving via `POST /api/client-logs`. `GET /api/logs` exposes that metadata to anyone who can reach the API, so run with `ACCESS_PASSWORD` set, or `LOGS_API=false`, on a shared network.
 
 ### Backend Does Not Reflect Request Headers
 
@@ -218,6 +289,8 @@ The settings endpoint (`/api/settings`) must never reflect request headers (`x-f
 cd backend && npx vitest run    # Node environment
 cd frontend && npx vitest run   # jsdom environment with fake-indexeddb
 ```
+
+Logging is covered by `backend/tests/logger.test.ts` (redaction, level filtering, queries), `backend/tests/logFile.test.ts` (rotation, tail reads, failure degradation), `backend/tests/logsRoute.test.ts` (ingestion limits, re-redaction, rate limiting), and `frontend/tests/utils/logger.test.ts` (redaction, buffering, forwarding opt-in and back-off).
 
 ### E2E Tests (Playwright)
 

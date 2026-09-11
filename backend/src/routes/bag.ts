@@ -1,8 +1,10 @@
 import { Router, Request, Response } from "express";
 import https from "https";
 import { BAG_TIMEOUT_MS, BAG_MAX_BYTES } from "../config.js";
+import { createLogger } from "../utils/logger.js";
 
 const router = Router();
+const log = createLogger("bag");
 const userAgent =
   "Configurator/2.17 (Macintosh; OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6";
 
@@ -24,6 +26,7 @@ router.get("/bag", async (req: Request, res: Response) => {
   }
 
   const url = `https://init.itunes.apple.com/bag.xml?guid=${encodeURIComponent(guid)}`;
+  const startedAt = Date.now();
 
   try {
     const body = await new Promise<string>((resolve, reject) => {
@@ -71,14 +74,29 @@ router.get("/bag", async (req: Request, res: Response) => {
     // Extract plist from XML wrapper
     const plistMatch = body.match(/<plist[\s\S]*<\/plist>/);
     if (!plistMatch) {
+      log.warn("bag response contained no plist", {
+        guid,
+        bytes: body.length,
+        durationMs: Date.now() - startedAt,
+      });
       res.status(502).json({ error: "No plist found in bag response" });
       return;
     }
 
+    log.info("bag fetched", {
+      guid,
+      bytes: plistMatch[0].length,
+      durationMs: Date.now() - startedAt,
+    });
+
     // Return raw plist XML for the client to parse
     res.type("text/xml").send(plistMatch[0]);
   } catch (err) {
-    console.error("Bag proxy error:", err instanceof Error ? err.message : err);
+    log.error("bag proxy failed", {
+      guid,
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
     res.status(502).json({ error: "Bag request failed" });
   }
 });

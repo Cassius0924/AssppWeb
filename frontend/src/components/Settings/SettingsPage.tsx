@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import PageContainer from "../Layout/PageContainer";
 import Modal from "../common/Modal";
+import LogsSection from "./LogsSection";
 import { useAccountsStore } from "../../store/accounts";
 import { useToastStore } from "../../store/toast";
 import { apiGet } from "../../api/client";
@@ -380,6 +381,8 @@ export default function SettingsPage() {
             {t("settings.data.button")}
           </button>
         </section>
+
+        <LogsSection />
 
         <section className="min-w-0 rounded-lg border border-gray-200 bg-white p-4 sm:p-6 dark:border-gray-800 dark:bg-gray-900">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">

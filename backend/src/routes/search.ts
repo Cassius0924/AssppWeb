@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
+import { createLogger } from "../utils/logger.js";
 
 const router = Router();
+const log = createLogger("itunes");
 
 // Map iTunes API fields to our Software type, matching Swift CodingKeys
 function mapSoftware(item: Record<string, any>) {
@@ -27,6 +29,7 @@ function mapSoftware(item: Record<string, any>) {
 }
 
 router.get("/search", async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   try {
     const params = new URLSearchParams(req.query as Record<string, string>);
     const response = await fetch(
@@ -34,14 +37,26 @@ router.get("/search", async (req: Request, res: Response) => {
     );
     const data = await response.json();
     const results = (data.results ?? []).map(mapSoftware);
+    log.debug("search completed", {
+      term: params.get("term"),
+      country: params.get("country"),
+      entity: params.get("entity"),
+      results: results.length,
+      upstreamStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
     res.json(results);
   } catch (err) {
-    console.error("Search error:", err instanceof Error ? err.message : err);
+    log.error("search request failed", {
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
     res.status(500).json({ error: "Search request failed" });
   }
 });
 
 router.get("/lookup", async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   try {
     const params = new URLSearchParams(req.query as Record<string, string>);
     const response = await fetch(
@@ -49,12 +64,29 @@ router.get("/lookup", async (req: Request, res: Response) => {
     );
     const data = await response.json();
     if (!data.resultCount || !data.results?.length) {
+      log.debug("lookup found nothing", {
+        bundleId: params.get("bundleId"),
+        id: params.get("id"),
+        country: params.get("country"),
+        upstreamStatus: response.status,
+        durationMs: Date.now() - startedAt,
+      });
       res.json(null);
       return;
     }
+    log.debug("lookup completed", {
+      bundleId: params.get("bundleId"),
+      id: params.get("id"),
+      country: params.get("country"),
+      upstreamStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
     res.json(mapSoftware(data.results[0]));
   } catch (err) {
-    console.error("Lookup error:", err instanceof Error ? err.message : err);
+    log.error("lookup request failed", {
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
     res.status(500).json({ error: "Lookup request failed" });
   }
 });

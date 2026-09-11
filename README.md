@@ -76,6 +76,22 @@ docker compose up -d
 | `MAX_DOWNLOAD_MB`                           | `0`             | Reject downloads exceeding this size in MB to prevent out-of-memory errors (0 to disable)   |
 | `DOWNLOAD_THREADS`                          | `8`             | Number of parallel threads for IPA downloads (1–32)                                         |
 | `ACCESS_PASSWORD`                           | _(none)_        | Require a password to access the web UI and API (empty to disable)                          |
+| `LOG_LEVEL`                                 | `info`          | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` (also controls Wisp proxy detail)   |
+| `LOG_FORMAT`                                | `pretty`        | Stdout format: `pretty` for reading, `json` for machine parsing                              |
+| `LOG_TO_FILE`                               | `true`          | Write rotating JSON-line logs to disk (`false` to disable)                                  |
+| `LOG_DIR`                                   | `DATA_DIR/logs` | Directory for log files                                                                     |
+| `LOG_MAX_FILE_MB`                           | `16`            | Rotate the log file once it exceeds this size (1–1024)                                      |
+| `LOG_MAX_FILES`                             | `5`             | Number of rotated log files to keep (1–50)                                                  |
+| `LOGS_API`                                  | `true`          | Serve `GET /api/logs` and the in-app log viewer (`false` to disable)                        |
+| `CLIENT_LOGS`                               | `true`          | Accept browser logs at `POST /api/client-logs` (`false` to reject)                          |
+
+**Logging**
+
+Server logs go to stdout (`docker compose logs -f asspp`) and to `DATA_DIR/logs/asspp.log`, rotated by size. Credentials are never logged: passwords, password tokens, cookies, 2FA codes, DSIDs and SINFs are stripped, and Apple IDs are masked.
+
+Apple authentication and downloads run inside your browser, so their failures are invisible to the server. Settings → Logging & Diagnostics lets you raise the browser log level, export browser logs as NDJSON, and optionally forward them to the server so they appear alongside the proxy and download logs. Forwarding is off until you turn it on.
+
+> `GET /api/logs` exposes request metadata (client IPs, Apple hosts contacted, timings). Set `ACCESS_PASSWORD`, or `LOGS_API=false`, if the app is reachable by others.
 
 **Reverse Proxy (Required for Install Apps on iOS)**
 
