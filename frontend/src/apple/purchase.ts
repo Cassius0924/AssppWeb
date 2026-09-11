@@ -124,7 +124,9 @@ async function purchaseWithParams(
       // any request fail, and neither value is inspectable from the server.
       tokenPresent: Boolean(account.passwordToken),
       dsidPresent: Boolean(account.directoryServicesIdentifier),
-      keys: Object.keys(dict),
+      // The whole body: four keys, none of them secret, and `m-allowed` has
+      // never been read. Redaction still applies on the way out.
+      body: dict,
       dialog: dict.dialog,
       action: dict.action,
     });

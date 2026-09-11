@@ -163,6 +163,10 @@ export async function getDownloadInfo(
         authorized: dict.authorized,
         customerMessage: dict.customerMessage,
         queueItemCount: dict["download-queue-item-count"],
+        jingleDocType: dict.jingleDocType,
+        jingleAction: dict.jingleAction,
+        statusValue: dict.status,
+        metrics: dict.metrics,
       });
       throw new DownloadError(i18n.t("errors.download.noItems"));
     }
