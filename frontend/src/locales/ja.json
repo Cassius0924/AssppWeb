@@ -477,6 +477,7 @@
       "requiresVerification": "2ファクタ認証コードが必要です。ポップアップが出ない場合は、https://account.apple.com でサインインしてアラートをトリガーし、コード欄に入力してください。",
       "redirectLocation": "リダイレクト先を取得できませんでした",
       "emptyBody": "認証失敗: サーバーが空のボディでHTTP {{status}}を返しました",
+      "throttled": "Apple がこの端末からのサインイン要求を一時的に拒否しています。数分待ってから再試行してください。",
       "missingAccountInfo": "レスポンスに accountInfo がありません",
       "missingAddress": "レスポンスに address がありません",
       "unknownReason": "不明な理由により認証に失敗しました"

@@ -49,6 +49,34 @@ describe("utils/logger redaction", () => {
     });
   });
 
+  it("keeps measurements of secrets, which are diagnostics rather than secrets", () => {
+    expect(
+      sanitizeFields({
+        cookieCount: 4,
+        signatureLength: 668,
+        sinfCount: 2,
+        bodyBytes: 440,
+        durationMs: 734,
+      }),
+    ).toEqual({
+      cookieCount: 4,
+      signatureLength: 668,
+      sinfCount: 2,
+      bodyBytes: 440,
+      durationMs: 734,
+    });
+  });
+
+  it("still redacts the size of a credential itself", () => {
+    expect(
+      sanitizeFields({ passwordLength: 12, tokenBytes: 64, secretSize: 8 }),
+    ).toEqual({
+      passwordLength: "[redacted]",
+      tokenBytes: "[redacted]",
+      secretSize: "[redacted]",
+    });
+  });
+
   it("redacts nested objects", () => {
     const result = sanitizeFields({
       request: { headers: { cookie: "sid=1" }, host: "buy.itunes.apple.com" },

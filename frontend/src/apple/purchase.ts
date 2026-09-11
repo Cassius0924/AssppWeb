@@ -12,6 +12,8 @@ export class PurchaseError extends Error {
   constructor(
     message: string,
     public readonly code?: string,
+    /** Apple rejected the stored password token; one re-authentication may fix it. */
+    public readonly tokenExpired: boolean = false,
   ) {
     super(message);
     this.name = "PurchaseError";
@@ -120,12 +122,14 @@ async function purchaseWithParams(
         throw new PurchaseError(
           i18n.t("errors.purchase.passwordExpired"),
           failureType,
+          true,
         );
       default: {
         if (customerMessage === "Your password has changed.") {
           throw new PurchaseError(
             i18n.t("errors.purchase.passwordExpired"),
             failureType,
+            true,
           );
         }
         if (customerMessage === "Subscription Required") {

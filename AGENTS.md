@@ -281,6 +281,27 @@ The settings endpoint (`/api/settings`) must never reflect request headers (`x-f
 - `customerMessage === 'Your password has changed.'`: Password token invalid
 - `action.url` ending in `termsPage`: Terms acceptance required (throw with URL)
 
+### Edge Throttling vs Application Errors
+
+Apple's edge answers throttled requests itself, without involving the store
+application. It presents as a `301` with no `Location` header and a 162-byte
+HTML body, an empty `204`, a bare `403`, or a TCP `ECONNRESET` — and it is
+intermittent, so the same client succeeds minutes later.
+
+Telling the two apart matters, because an application error is worth retrying
+and a throttled one is not. **Every response produced by the store application
+carries `x-apple-jingle-correlation-key`** (along with `x-responding-instance`,
+`pod`, `apple-seq`). A response missing it never reached MZFinance.
+`refusedByEdge()` in `frontend/src/apple/authenticate.ts` uses exactly that
+signal to raise `AuthThrottledError` and abandon the attempt loop instead of
+spending another request against the limit that just rejected it.
+
+**Do not re-authenticate speculatively.** The authenticate endpoint is the
+throttled one. `acquireLicense()` purchases first and renews the token only
+when Apple reports it expired (`PurchaseError.tokenExpired`); renewing before
+every purchase sent one authenticate request per button press, which is what
+triggered the throttling in the first place.
+
 ## Testing
 
 ### Unit Tests

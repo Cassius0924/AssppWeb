@@ -149,23 +149,45 @@ export async function getDownloadInfo(
 
     const songList = dict.songList as Record<string, any>[] | undefined;
     if (!songList || songList.length === 0) {
+      // Reached when the account holds no license for the app: Apple answers
+      // 200 with a plist that carries neither a failureType nor any item.
+      log.error("response contained no items", {
+        bundleId: app.bundleID,
+        host: requestHost,
+        status: response.status,
+        bodyBytes: response.body.length,
+        keys: Object.keys(dict),
+      });
       throw new DownloadError(i18n.t("errors.download.noItems"));
     }
 
     const item = songList[0];
     const url = item.URL as string;
     if (!url) {
+      log.error("item carried no download URL", {
+        bundleId: app.bundleID,
+        itemKeys: Object.keys(item),
+      });
       throw new DownloadError(i18n.t("errors.download.missingUrl"));
     }
 
     const metadata = item.metadata as Record<string, any>;
     if (!metadata) {
+      log.error("item carried no metadata", {
+        bundleId: app.bundleID,
+        itemKeys: Object.keys(item),
+      });
       throw new DownloadError(i18n.t("errors.download.missingMetadata"));
     }
 
     const version = metadata.bundleShortVersionString as string;
     const bundleVersion = metadata.bundleVersion as string;
     if (!version || !bundleVersion) {
+      log.error("metadata carried no version", {
+        bundleId: app.bundleID,
+        hasShortVersion: Boolean(version),
+        hasBundleVersion: Boolean(bundleVersion),
+      });
       throw new DownloadError(i18n.t("errors.download.missingVersion"));
     }
 
@@ -192,6 +214,10 @@ export async function getDownloadInfo(
     }
 
     if (sinfs.length === 0) {
+      log.error("item carried no sinfs", {
+        bundleId: app.bundleID,
+        itemKeys: Object.keys(item),
+      });
       throw new DownloadError(i18n.t("errors.download.noSinf"));
     }
 
@@ -224,6 +250,11 @@ export async function getDownloadInfo(
     };
   }
 
+  log.error("gave up after too many redirects", {
+    bundleId: app.bundleID,
+    host: requestHost,
+    redirects: redirectAttempt,
+  });
   throw new DownloadError(i18n.t("errors.download.tooManyRedirects"));
 }
 

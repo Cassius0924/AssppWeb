@@ -52,6 +52,19 @@ describe("log redaction", () => {
     });
   });
 
+  it("keeps measurements of secrets, which are diagnostics rather than secrets", () => {
+    expect(
+      sanitizeFields({ cookieCount: 4, signatureLength: 668, sinfCount: 2 }),
+    ).toEqual({ cookieCount: 4, signatureLength: 668, sinfCount: 2 });
+  });
+
+  it("still redacts the size of a credential itself", () => {
+    expect(sanitizeFields({ passwordLength: 12, tokenBytes: 64 })).toEqual({
+      passwordLength: "[redacted]",
+      tokenBytes: "[redacted]",
+    });
+  });
+
   it("masks email addresses wherever they appear", () => {
     expect(maskEmail("someone@example.com")).toBe("s******@example.com");
     expect(sanitizeFields({ note: "login for user@icloud.com failed" })).toEqual(

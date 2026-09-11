@@ -63,8 +63,19 @@ const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 const REDACTED = "[redacted]";
 
+// How many cookies, how long a signature — measurements like these are what a
+// failing request needs to be understood, and they give nothing away. The size
+// of a credential itself is still a credential detail, so anything naming one
+// is redacted whatever shape the key takes ("passwordLength", "tokenBytes").
+const METRIC_SUFFIXES = ["count", "length", "bytes", "size"];
+const NEVER_MEASURED = ["password", "passwd", "pwd", "secret", "token"];
+
 function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z]/g, "");
+  if (NEVER_MEASURED.some((word) => normalized.includes(word))) return true;
+  if (METRIC_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) {
+    return false;
+  }
   if (SENSITIVE_KEYS.has(normalized)) return true;
   if (normalized.includes("cookie")) return true;
   return SENSITIVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));

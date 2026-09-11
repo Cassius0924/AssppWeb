@@ -19,6 +19,26 @@ export class AuthenticationError extends Error {
   }
 }
 
+/** Apple's edge refused the request before it reached the store application. */
+export class AuthThrottledError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = 'AuthThrottledError';
+  }
+}
+
+// Every response produced by Apple's store application carries a Jingle
+// correlation key. Responses without one (a 301 with no Location, an empty
+// 204, a bare 403) were synthesized by the edge, which is how its anti-abuse
+// throttling presents itself. Retrying those immediately only digs deeper, so
+// they end the attempt loop instead of consuming one of its retries.
+function refusedByEdge(headers: Record<string, string>): boolean {
+  return !('x-apple-jingle-correlation-key' in headers);
+}
+
 export async function authenticate(
   email: string,
   password: string,
@@ -46,7 +66,7 @@ export async function authenticate(
     path: authEndpoint.pathname,
     guid: deviceId,
     withCode: Boolean(code),
-    reusingCookies: cookies.length,
+    cookieCount: cookies.length,
     sapRequired: Boolean(bag.sap),
   });
 
@@ -113,6 +133,7 @@ export async function authenticate(
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers['location'];
         if (!location) {
+          const throttled = refusedByEdge(response.headers);
           log.error('redirect without a Location header', {
             host: requestHost,
             path: requestPath,
@@ -120,8 +141,14 @@ export async function authenticate(
             responseHeaders: Object.keys(response.headers),
             attempt: currentAttempt,
             redirectAttempt,
+            throttled,
           });
-          throw new Error(i18n.t('errors.auth.redirectLocation'));
+          throw throttled
+            ? new AuthThrottledError(
+                i18n.t('errors.auth.throttled'),
+                response.status,
+              )
+            : new Error(i18n.t('errors.auth.redirectLocation'));
         }
         log.info('following redirect', {
           from: requestHost,
@@ -138,6 +165,7 @@ export async function authenticate(
 
       // Handle non-plist responses (e.g. 403 with empty body)
       if (!response.body.trim()) {
+        const throttled = refusedByEdge(response.headers);
         log.error('empty response body', {
           host: requestHost,
           path: requestPath,
@@ -145,16 +173,23 @@ export async function authenticate(
           responseHeaders: Object.keys(response.headers),
           signed: Boolean(bag.sap),
           attempt: currentAttempt,
+          throttled,
         });
-        throw new Error(
-          i18n.t('errors.auth.emptyBody', { status: response.status }),
-        );
+        throw throttled
+          ? new AuthThrottledError(
+              i18n.t('errors.auth.throttled'),
+              response.status,
+            )
+          : new Error(
+              i18n.t('errors.auth.emptyBody', { status: response.status }),
+            );
       }
 
       let dict: Record<string, any>;
       try {
         dict = parsePlist(response.body) as Record<string, any>;
       } catch (parseError) {
+        const throttled = refusedByEdge(response.headers);
         log.error('response was not a plist', {
           host: requestHost,
           path: requestPath,
@@ -162,9 +197,15 @@ export async function authenticate(
           contentType: response.headers['content-type'],
           bodyBytes: response.body.length,
           signed: Boolean(bag.sap),
+          throttled,
           error: parseError,
         });
-        throw parseError;
+        throw throttled
+          ? new AuthThrottledError(
+              i18n.t('errors.auth.throttled'),
+              response.status,
+            )
+          : parseError;
       }
 
       // Check for 2FA requirement
@@ -226,6 +267,16 @@ export async function authenticate(
       return account;
     } catch (e) {
       if (e instanceof AuthenticationError) throw e;
+      // Surface throttling immediately: a second attempt would be one more
+      // request against the limit that just rejected us.
+      if (e instanceof AuthThrottledError) {
+        log.error('authentication refused by Apple edge', {
+          host: requestHost,
+          status: e.status,
+          attempt: currentAttempt,
+        });
+        throw e;
+      }
       lastError = e instanceof Error ? e : new Error(String(e));
       log.warn('authentication attempt failed', {
         host: requestHost,

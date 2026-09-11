@@ -3,13 +3,16 @@ import { useAccounts } from "./useAccounts";
 import { useToastStore } from "../store/toast";
 import { useDownloadsStore } from "../store/downloads";
 import { getDownloadInfo } from "../apple/download";
-import { purchaseApp } from "../apple/purchase";
+import { purchaseApp, PurchaseError } from "../apple/purchase";
 import { authenticate } from "../apple/authenticate";
 import { apiPost, apiGet } from "../api/client";
 import { accountHash } from "../utils/account";
 import { getErrorMessage } from "../utils/error";
+import { createLogger } from "../utils/logger";
 import { getAccountContext } from "../utils/toast";
 import type { Account, Software } from "../types";
+
+const log = createLogger("download-action");
 
 /**
  * Shared hook for download & purchase actions.
@@ -79,11 +82,22 @@ export function useDownloadAction() {
     const ctx = getAccountContext(account, t);
     const appName = app.name;
 
-    // Silently renew the password token before purchasing.
-    // This prevents "token expired" (2034/2042) errors that would
-    // otherwise require the user to manually re-authenticate.
+    // The token is renewed only when Apple actually reports it expired.
+    // Re-authenticating before every purchase used to send one request to the
+    // authenticate endpoint per button press, which is what draws Apple's
+    // throttling — and because that failure was swallowed, the purchase then
+    // ran with a dead token and surfaced a misleading error instead.
     let currentAccount = account;
+    let result;
     try {
+      result = await purchaseApp(currentAccount, app);
+    } catch (e) {
+      if (!(e instanceof PurchaseError) || !e.tokenExpired) throw e;
+
+      log.info("password token expired, re-authenticating once", {
+        bundleId: app.bundleID,
+        code: e.code,
+      });
       const renewed = await authenticate(
         account.email,
         account.password,
@@ -93,11 +107,9 @@ export function useDownloadAction() {
       );
       await updateAccount(renewed);
       currentAccount = renewed;
-    } catch {
-      // Ignore — proceed with existing token
+      result = await purchaseApp(currentAccount, app);
     }
 
-    const result = await purchaseApp(currentAccount, app);
     await updateAccount({ ...currentAccount, cookies: result.updatedCookies });
 
     addToast(

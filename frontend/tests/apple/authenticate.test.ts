@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildPlist } from "../../src/apple/plist";
-import { authenticate } from "../../src/apple/authenticate";
+import {
+  authenticate,
+  AuthThrottledError,
+} from "../../src/apple/authenticate";
 import { appleRequest } from "../../src/apple/request";
 import { fetchBag } from "../../src/apple/bag";
 import { signAuthBody } from '../../src/apple/sap/client';
@@ -43,6 +46,80 @@ describe("apple/authenticate", () => {
     vi.mocked(signAuthBody).mockRejectedValue(new Error('Signing failed'));
     await expect(authenticate('user@example.com', 'secret', undefined, undefined, 'aabbccddeeff')).rejects.toThrow('Signing failed');
     expect(appleRequest).not.toHaveBeenCalled();
+  });
+
+  // Apple's edge answers throttled requests itself — a 301 with no Location or
+  // an empty 204 — and those responses lack the Jingle correlation key that
+  // every store-application response carries.
+  const edgeHeaders = {
+    server: "Apple",
+    "strict-transport-security": "max-age=31536000",
+  };
+  const appHeaders = {
+    ...edgeHeaders,
+    "x-apple-jingle-correlation-key": "LMAJWGEYXRRYHBDCQW6CBMKRFI",
+  };
+
+  function response(over: Record<string, unknown>) {
+    return {
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      rawHeaders: [],
+      body: "",
+      ...over,
+    } as any;
+  }
+
+  it("reports edge throttling for a 301 without a Location header", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest).mockResolvedValue(
+      response({ status: 301, headers: edgeHeaders, body: "<html></html>" }),
+    );
+
+    await expect(
+      authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
+    ).rejects.toBeInstanceOf(AuthThrottledError);
+
+    // Retrying would spend another request against the limit that just rejected us.
+    expect(appleRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports edge throttling for an empty 204", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest).mockResolvedValue(
+      response({ status: 204, headers: edgeHeaders }),
+    );
+
+    await expect(
+      authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
+    ).rejects.toBeInstanceOf(AuthThrottledError);
+    expect(appleRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the original error when the store application answered", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest).mockResolvedValue(
+      response({ status: 302, headers: appHeaders }),
+    );
+
+    const error = await authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+    ).catch((e) => e);
+
+    expect(error).not.toBeInstanceOf(AuthThrottledError);
+    // A real application response still gets the existing two attempts.
+    expect(appleRequest).toHaveBeenCalledTimes(2);
   });
 
   it("sets guid query exactly once from bag endpoint", async () => {
