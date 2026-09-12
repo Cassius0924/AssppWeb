@@ -25,6 +25,58 @@ function account(over: Partial<Account> = {}): Account {
   } as Account;
 }
 
+describe("apple/purchase 5002 fallback", () => {
+  const failure = buildPlist({
+    failureType: "5002",
+    customerMessage: "An unknown error has occurred",
+  });
+  const success = buildPlist({ jingleDocType: "purchaseSuccess", status: 0 });
+
+  function reply(body: string) {
+    return {
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      rawHeaders: [],
+      body,
+    } as never;
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("gives the generic store host a turn before giving up", async () => {
+    vi.mocked(appleRequest)
+      .mockResolvedValueOnce(reply(failure))
+      .mockResolvedValueOnce(reply(success));
+
+    await purchaseApp(account(), app);
+
+    const hosts = vi.mocked(appleRequest).mock.calls.map((c) => c[0].host);
+    expect(hosts).toEqual([
+      "p32-buy.itunes.apple.com",
+      "buy.itunes.apple.com",
+    ]);
+  });
+
+  it("reports the failure when the generic host refuses too", async () => {
+    vi.mocked(appleRequest).mockResolvedValue(reply(failure));
+
+    await expect(purchaseApp(account(), app)).rejects.toMatchObject({
+      code: "5002",
+    });
+    expect(appleRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry when there is no pod host to move off", async () => {
+    vi.mocked(appleRequest).mockResolvedValue(reply(failure));
+
+    await expect(
+      purchaseApp(account({ pod: undefined }), app),
+    ).rejects.toMatchObject({ code: "5002" });
+    expect(appleRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("apple/purchase storefront header", () => {
   beforeEach(() => {
     vi.clearAllMocks();

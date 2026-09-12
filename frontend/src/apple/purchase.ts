@@ -2,7 +2,7 @@ import type { Account, Software } from "../types";
 import { appleRequest } from "./request";
 import { buildPlist, parsePlist } from "./plist";
 import { extractAndMergeCookies } from "./cookies";
-import { purchaseAPIHost } from "./config";
+import { purchaseAPIHost, RETRYABLE_FAILURE_TYPE } from "./config";
 import { createLogger } from "../utils/logger";
 import i18n from "../i18n";
 
@@ -44,6 +44,27 @@ export async function purchaseApp(
         bundleId: app.bundleID,
       });
       return await purchaseWithParams(account, app, "GAME");
+    }
+
+    // 5002 is Apple's catch-all, and the download flow already treats it as
+    // something a different endpoint may answer differently. The pod host is
+    // the only one this call has ever used, so give the generic store host a
+    // turn before giving up.
+    if (
+      e instanceof PurchaseError &&
+      e.code === RETRYABLE_FAILURE_TYPE &&
+      account.pod
+    ) {
+      log.info("retrying license on the generic store host", {
+        bundleId: app.bundleID,
+        from: purchaseAPIHost(account.pod),
+        to: purchaseAPIHost(),
+      });
+      return await purchaseWithParams(
+        { ...account, pod: undefined },
+        app,
+        "STDQ",
+      );
     }
     log.warn("license acquisition failed", {
       bundleId: app.bundleID,
