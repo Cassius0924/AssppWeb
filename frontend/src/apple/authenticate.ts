@@ -40,6 +40,14 @@ function refusedByEdge(headers: Record<string, string>): boolean {
   return !('x-apple-jingle-correlation-key' in headers);
 }
 
+/** The pod host rejects the bare path with 404; Apple's redirect adds these. */
+function podPath(endpoint: URL, pod: string): string {
+  const url = new URL(endpoint.toString());
+  url.searchParams.set('Pod', pod);
+  url.searchParams.set('PRH', pod);
+  return `${url.pathname}${url.search}`;
+}
+
 export async function authenticate(
   email: string,
   password: string,
@@ -65,13 +73,17 @@ export async function authenticate(
   requestPath = `${authEndpoint.pathname}${authEndpoint.search}`;
 
   // The generic store host answers a signed sign-in with a redirect to the
-  // account's pod, but that response arrives without a Location header and so
-  // cannot be followed. Once the pod is known, address it directly — the same
-  // path is served there.
+  // account's pod, but that response often arrives without a Location header
+  // and so cannot be followed. Once the pod is known, address it directly.
+  //
+  // The pod host needs the Pod and PRH parameters that Apple's own redirect
+  // carries; without them it answers 404. Observed Location:
+  //   https://p32-buy.itunes.apple.com/...?guid=<guid>&Pod=32&PRH=32
   let podHost = '';
   if (pod) {
     podHost = storeAPIHost(pod);
     requestHost = podHost;
+    requestPath = podPath(authEndpoint, pod);
   }
 
   log.info('authentication started', {
@@ -152,7 +164,7 @@ export async function authenticate(
           // Location it is redirecting to, so the destination is recoverable.
           const advertisedPod = response.headers['pod'] || pod;
           const target = advertisedPod ? storeAPIHost(advertisedPod) : '';
-          if (target && target !== requestHost) {
+          if (advertisedPod && target && target !== requestHost) {
             log.warn('redirect without Location; retrying on the pod host', {
               from: requestHost,
               to: target,
@@ -161,6 +173,7 @@ export async function authenticate(
             });
             podHost = target;
             requestHost = target;
+            requestPath = podPath(authEndpoint, advertisedPod);
             currentAttempt--;
             redirectAttempt++;
             continue;

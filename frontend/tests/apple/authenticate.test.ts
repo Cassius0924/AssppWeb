@@ -99,9 +99,13 @@ describe("apple/authenticate", () => {
     );
 
     expect(account.passwordToken).toBe("token");
-    expect(vi.mocked(appleRequest).mock.calls[1][0].host).toBe(
-      "p32-buy.itunes.apple.com",
-    );
+    const retry = vi.mocked(appleRequest).mock.calls[1][0];
+    expect(retry.host).toBe("p32-buy.itunes.apple.com");
+    const retryQuery = new URL(
+      `https://${retry.host}${retry.path}`,
+    ).searchParams;
+    expect(retryQuery.get("Pod")).toBe("32");
+    expect(retryQuery.get("PRH")).toBe("32");
   });
 
   it("addresses the pod host directly when the pod is already known", async () => {
@@ -128,9 +132,13 @@ describe("apple/authenticate", () => {
       "32",
     );
 
-    expect(vi.mocked(appleRequest).mock.calls[0][0].host).toBe(
-      "p32-buy.itunes.apple.com",
-    );
+    // The pod host answers the bare path with 404; Apple's own redirect
+    // carries Pod and PRH, so addressing it directly must carry them too.
+    const request = vi.mocked(appleRequest).mock.calls[0][0];
+    expect(request.host).toBe("p32-buy.itunes.apple.com");
+    const query = new URL(`https://${request.host}${request.path}`).searchParams;
+    expect(query.get("Pod")).toBe("32");
+    expect(query.get("PRH")).toBe("32");
   });
 
   it("gives up when a redirect omits its Location and no pod is known", async () => {

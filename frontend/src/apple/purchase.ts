@@ -120,10 +120,12 @@ async function purchaseWithParams(
       status: response.status,
       storeFront,
       storeFrontEchoed: Boolean(account.storeFront),
-      // Rules out the trivial explanations: a blank token or DSID would make
-      // any request fail, and neither value is inspectable from the server.
-      tokenPresent: Boolean(account.passwordToken),
-      dsidPresent: Boolean(account.directoryServicesIdentifier),
+      // Rules out the trivial explanations. The names live in the value, not
+      // the key, so redaction does not swallow the answer.
+      missingCredentials: [
+        account.passwordToken ? '' : 'passwordToken',
+        account.directoryServicesIdentifier ? '' : 'dsid',
+      ].filter(Boolean),
       // The whole body: four keys, none of them secret, and `m-allowed` has
       // never been read. Redaction still applies on the way out.
       body: dict,

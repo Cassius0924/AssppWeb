@@ -296,6 +296,16 @@ that, a Location-less redirect retries once against the host named by the `pod`
 response header. Always pass `account.pod` when re-authenticating an existing
 account.
 
+**The pod host needs `Pod` and `PRH` query parameters.** When Apple's redirect
+does arrive intact, its Location is
+`https://p32-buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate?guid=<guid>&Pod=32&PRH=32`.
+Addressing the pod host with the bare path answers `404` with a 146-byte HTML
+page, so `podPath()` adds both parameters.
+
+The same endpoint has been observed returning `200`, `204`, `301`, `302` with
+and without `Location`, and `404` for what is otherwise the same request, so
+treat any single response as a sample rather than the rule.
+
 ### Storefront Must Be Echoed, Not Rebuilt
 
 Sign-in keeps `x-set-apple-store-front` twice: `Account.store` holds only the
