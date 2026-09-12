@@ -32,13 +32,32 @@ export class AuthEndpointError extends Error {
 }
 
 // Every response produced by Apple's store application carries a Jingle
-// correlation key. Responses without one — a 3xx with no Location, an empty
-// 204, a bare 403 — were synthesized at the edge and hold nothing to act on,
-// so they end the attempt loop rather than consuming another retry against a
-// host that just produced one.
+// correlation key. Responses without one were synthesized at the edge.
 function refusedByEdge(headers: Record<string, string>): boolean {
   return !('x-apple-jingle-correlation-key' in headers);
 }
+
+/**
+ * Thrown for an edge-synthesized response, which says nothing about the
+ * credentials and so must not spend one of their two attempts.
+ *
+ * The edge rejects probabilistically rather than consistently: one capture of
+ * fifteen identical sign-ins, 200 ms apart, drew 301, 204, 503, 404, 403 and
+ * 500 in no order, with 146-190 byte HTML bodies — and three of them went
+ * through and returned the real 2974-byte plist. Nothing distinguishes a
+ * request that will pass from one that will not, so the only move is to ask
+ * again, spaced out enough not to make matters worse.
+ */
+class EdgeRefusal extends Error {
+  constructor(public readonly status: number) {
+    super('Apple edge refused the request');
+  }
+}
+
+const EDGE_RETRY_DELAYS_MS = [400, 1200, 3000, 6000];
+
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The pod host rejects the bare path with 404; Apple's redirect adds these. */
 function podPath(endpoint: URL, pod: string): string {
@@ -98,6 +117,7 @@ export async function authenticate(
 
   let currentAttempt = 0;
   let redirectAttempt = 0;
+  let edgeAttempt = 0;
 
   while (currentAttempt < 2 && redirectAttempt <= 3) {
     currentAttempt++;
@@ -191,10 +211,7 @@ export async function authenticate(
             redirectAttempt,
             refusedByEdge: refusedByEdge(response.headers),
           });
-          throw new AuthEndpointError(
-            i18n.t('errors.auth.endpointRefused', { status: response.status }),
-            response.status,
-          );
+          throw new EdgeRefusal(response.status);
         }
         log.info('following redirect', {
           from: requestHost,
@@ -222,10 +239,7 @@ export async function authenticate(
           throttled,
         });
         throw throttled
-          ? new AuthEndpointError(
-              i18n.t('errors.auth.endpointRefused', { status: response.status }),
-              response.status,
-            )
+          ? new EdgeRefusal(response.status)
           : new Error(
               i18n.t('errors.auth.emptyBody', { status: response.status }),
             );
@@ -246,12 +260,7 @@ export async function authenticate(
           throttled,
           error: parseError,
         });
-        throw throttled
-          ? new AuthEndpointError(
-              i18n.t('errors.auth.endpointRefused', { status: response.status }),
-              response.status,
-            )
-          : parseError;
+        throw throttled ? new EdgeRefusal(response.status) : parseError;
       }
 
       // Check for 2FA requirement
@@ -315,15 +324,33 @@ export async function authenticate(
       return account;
     } catch (e) {
       if (e instanceof AuthenticationError) throw e;
-      // Nothing in an edge-synthesized response changes on a retry.
-      if (e instanceof AuthEndpointError) {
-        log.error('authentication refused without a usable response', {
+      if (e instanceof EdgeRefusal) {
+        // An edge refusal says nothing about the credentials, so it must not
+        // count against them — only against its own budget.
+        currentAttempt--;
+        if (edgeAttempt < EDGE_RETRY_DELAYS_MS.length) {
+          const waitMs = EDGE_RETRY_DELAYS_MS[edgeAttempt];
+          edgeAttempt++;
+          log.warn('edge refused the sign-in; backing off and retrying', {
+            host: requestHost,
+            status: e.status,
+            edgeAttempt,
+            waitMs,
+          });
+          await delay(waitMs);
+          continue;
+        }
+
+        log.error('edge refused every sign-in attempt', {
           host: requestHost,
           status: e.status,
-          attempt: currentAttempt,
+          edgeAttempts: edgeAttempt,
           podHost: podHost || undefined,
         });
-        throw e;
+        throw new AuthEndpointError(
+          i18n.t('errors.auth.endpointRefused', { status: e.status }),
+          e.status,
+        );
       }
       lastError = e instanceof Error ? e : new Error(String(e));
       log.warn('authentication attempt failed', {

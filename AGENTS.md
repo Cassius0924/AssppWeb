@@ -302,9 +302,21 @@ does arrive intact, its Location is
 Addressing the pod host with the bare path answers `404` with a 146-byte HTML
 page, so `podPath()` adds both parameters.
 
-The same endpoint has been observed returning `200`, `204`, `301`, `302` with
-and without `Location`, and `404` for what is otherwise the same request, so
-treat any single response as a sample rather than the rule.
+### The Sign-in Endpoint Refuses Probabilistically
+
+Fifteen identical sign-ins, 200 ms apart, drew `301`, `204`, `503`, `404`,
+`403` and `500` in no order — every one a 146-190 byte HTML page with no Apple
+application headers — while three others went through and returned the real
+2974-byte plist. No API behaves that way; Apple's edge is rejecting a share of
+requests on purpose, most likely off the TLS fingerprint, since the same
+request from curl (OpenSSL) reaches MZFinance every time.
+
+Two consequences. A single response is a sample, never the rule: never
+conclude anything from one status code. And an edge refusal must be **retried
+with backoff**, not surfaced — `authenticate()` retries on
+`EDGE_RETRY_DELAYS_MS` (400 ms, 1.2 s, 3 s, 6 s) and only then reports
+`AuthEndpointError`. Those retries do not count against the two credential
+attempts, because an edge refusal says nothing about the credentials.
 
 ### Storefront Must Be Echoed, Not Rebuilt
 

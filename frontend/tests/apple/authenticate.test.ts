@@ -142,6 +142,7 @@ describe("apple/authenticate", () => {
   });
 
   it("gives up when a redirect omits its Location and no pod is known", async () => {
+    vi.useFakeTimers();
     vi.mocked(fetchBag).mockResolvedValue({
       authURL: "https://buy.itunes.apple.com/authenticate",
     });
@@ -149,15 +150,56 @@ describe("apple/authenticate", () => {
       response({ status: 301, headers: edgeHeaders, body: "<html></html>" }),
     );
 
-    await expect(
-      authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
-    ).rejects.toBeInstanceOf(AuthEndpointError);
+    const pending = authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+    ).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(30_000);
 
-    // Retrying would spend another request against the limit that just rejected us.
-    expect(appleRequest).toHaveBeenCalledTimes(1);
+    expect(await pending).toBeInstanceOf(AuthEndpointError);
+    vi.useRealTimers();
   });
 
-  it("reports edge throttling for an empty 204", async () => {
+  it("retries through edge refusals and succeeds when one gets past", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    // The edge rejects probabilistically with assorted status codes; the
+    // request that eventually lands is identical to the ones that did not.
+    vi.mocked(appleRequest)
+      .mockResolvedValueOnce(response({ status: 204, headers: edgeHeaders }))
+      .mockResolvedValueOnce(response({ status: 503, headers: edgeHeaders }))
+      .mockResolvedValue(
+        response({
+          headers: appHeaders,
+          body: buildPlist({
+            accountInfo: { address: {} },
+            passwordToken: "token",
+            dsPersonId: "123",
+          }),
+        }),
+      );
+
+    const pending = authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(pending).resolves.toMatchObject({ passwordToken: "token" });
+    expect(appleRequest).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it("gives up once the edge has refused every retry", async () => {
+    vi.useFakeTimers();
     vi.mocked(fetchBag).mockResolvedValue({
       authURL: "https://buy.itunes.apple.com/authenticate",
     });
@@ -165,10 +207,19 @@ describe("apple/authenticate", () => {
       response({ status: 204, headers: edgeHeaders }),
     );
 
-    await expect(
-      authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
-    ).rejects.toBeInstanceOf(AuthEndpointError);
-    expect(appleRequest).toHaveBeenCalledTimes(1);
+    const pending = authenticate(
+      "user@example.com",
+      "secret",
+      undefined,
+      undefined,
+      "aabb",
+    ).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await pending).toBeInstanceOf(AuthEndpointError);
+    // One try plus the four backoff retries, and no more.
+    expect(appleRequest).toHaveBeenCalledTimes(5);
+    vi.useRealTimers();
   });
 
   it("keeps retrying when the store application itself answered", async () => {
