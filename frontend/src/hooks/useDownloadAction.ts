@@ -92,7 +92,32 @@ export function useDownloadAction() {
     try {
       result = await purchaseApp(currentAccount, app);
     } catch (e) {
-      if (!(e instanceof PurchaseError) || !e.tokenExpired) throw e;
+      if (!(e instanceof PurchaseError)) throw e;
+
+      // 5002 says only that Apple declined; it does not say whether the
+      // license is missing or already held. The download endpoint knows,
+      // so ask it rather than reporting a failure the account may not have.
+      if (e.code === "5002") {
+        log.info("5002 — checking whether the license already exists", {
+          bundleId: app.bundleID,
+        });
+        try {
+          const { updatedCookies } = await getDownloadInfo(currentAccount, app);
+          await updateAccount({ ...currentAccount, cookies: updatedCookies });
+          log.info("license already held", { bundleId: app.bundleID });
+          addToast(
+            t("toast.msg", { appName, ...ctx }),
+            "success",
+            t("toast.title.licenseAlreadyOwned"),
+          );
+          return;
+        } catch {
+          // No license either — the original refusal stands.
+          throw e;
+        }
+      }
+
+      if (!e.tokenExpired) throw e;
 
       log.info("password token expired, re-authenticating once", {
         bundleId: app.bundleID,

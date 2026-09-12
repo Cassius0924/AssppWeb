@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDownloadAction } from "../../src/hooks/useDownloadAction";
 import { PurchaseError, purchaseApp } from "../../src/apple/purchase";
 import { authenticate } from "../../src/apple/authenticate";
+import { getDownloadInfo } from "../../src/apple/download";
 import type { Account, Software } from "../../src/types";
 
 const mocks = vi.hoisted(() => ({
@@ -91,8 +92,41 @@ describe("useDownloadAction / acquireLicense", () => {
     expect(purchaseApp).toHaveBeenCalledTimes(2);
   });
 
-  it("surfaces other purchase failures instead of hiding them", async () => {
+  it("treats 5002 as already owned when the license actually resolves", async () => {
+    vi.mocked(purchaseApp).mockRejectedValue(
+      new PurchaseError("unknown error", "5002"),
+    );
+    vi.mocked(getDownloadInfo).mockResolvedValue({
+      output: {},
+      updatedCookies: [],
+    } as never);
+
+    const { result } = renderHook(() => useDownloadAction());
+    await result.current.acquireLicense(account, app);
+
+    // 5002 does not distinguish "declined" from "you already have it";
+    // the download endpoint does, so it decides.
+    expect(getDownloadInfo).toHaveBeenCalledTimes(1);
+    expect(mocks.addToast).toHaveBeenCalledWith(
+      expect.anything(),
+      "success",
+      "toast.title.licenseAlreadyOwned",
+    );
+  });
+
+  it("reports 5002 when there is no license either", async () => {
     const failure = new PurchaseError("unknown error", "5002");
+    vi.mocked(purchaseApp).mockRejectedValue(failure);
+    vi.mocked(getDownloadInfo).mockRejectedValue(new Error("no items"));
+
+    const { result } = renderHook(() => useDownloadAction());
+    await expect(result.current.acquireLicense(account, app)).rejects.toBe(
+      failure,
+    );
+  });
+
+  it("surfaces other purchase failures instead of hiding them", async () => {
+    const failure = new PurchaseError("unavailable", "2059");
     vi.mocked(purchaseApp).mockRejectedValue(failure);
 
     const { result } = renderHook(() => useDownloadAction());
@@ -101,6 +135,7 @@ describe("useDownloadAction / acquireLicense", () => {
     );
 
     expect(authenticate).not.toHaveBeenCalled();
+    expect(getDownloadInfo).not.toHaveBeenCalled();
     expect(purchaseApp).toHaveBeenCalledTimes(1);
   });
 });

@@ -246,6 +246,10 @@ export async function getDownloadInfo(
       sinfCount: sinfs.length,
       downloadHost: safeHost(url),
       redirects: redirectAttempt,
+      // Logged on success too, so a working response can be compared against
+      // the empty ones rather than guessed at.
+      authorized: dict.authorized,
+      items: songList.length,
     });
 
     return {

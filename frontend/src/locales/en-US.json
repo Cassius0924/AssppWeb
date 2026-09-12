@@ -490,6 +490,7 @@
       "downloadSuccess": "Download Success",
       "downloadFailed": "Download Failed",
       "licenseSuccess": "License Acquired",
+      "licenseAlreadyOwned": "Already in your library",
       "licenseFailed": "License Failed",
       "installStarted": "Installation Started",
       "shareAcquired": "Link Acquired",

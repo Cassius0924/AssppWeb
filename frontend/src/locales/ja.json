@@ -490,6 +490,7 @@
       "downloadSuccess": "ダウンロード成功",
       "downloadFailed": "ダウンロード失敗",
       "licenseSuccess": "ライセンス取得成功",
+      "licenseAlreadyOwned": "すでにライブラリにあります",
       "licenseFailed": "ライセンス取得失敗",
       "installStarted": "インストール開始",
       "shareAcquired": "リンク取得成功",

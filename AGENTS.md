@@ -314,7 +314,20 @@ numeric id, because the rest of the app maps that to a country, and
 `143441-1,34`). Requests that carry `X-Apple-Store-Front` send `storeFront`
 unchanged — the suffix is Apple's to choose, and rebuilding one guesses at it.
 
-### buyProduct failureType 5002
+### buyProduct failureType 5002 Does Not Mean Failure
+
+Observed across two accounts and two storefronts: obscure apps acquire a
+license normally, while apps the account already holds answer `5002`. The
+decisive case is `com.xiaomi.mico` — two `5002` refusals, then
+`volumeStoreDownloadProduct` resolved and the 202 MB download completed. The
+license was there all along.
+
+So `5002` does not distinguish "declined" from "you already have it", and the
+download endpoint is the authority on which it is. `acquireLicense()` asks it:
+if download info resolves, the license exists and the flow reports success; if
+it does not, the original refusal stands.
+
+### buyProduct failureType 5002 (background)
 
 Observed against a real account: `200 OK` with `failureType 5002`,
 `customerMessage "An unknown error has occurred"`, and a body holding nothing

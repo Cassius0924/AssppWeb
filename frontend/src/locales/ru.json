@@ -488,6 +488,7 @@
       "downloadSuccess": "Успешная загрузка",
       "downloadFailed": "Ошибка загрузки",
       "licenseSuccess": "Лицензия получена",
+      "licenseAlreadyOwned": "Уже в вашей медиатеке",
       "licenseFailed": "Ошибка получения лицензии",
       "installStarted": "Начало установки",
       "shareAcquired": "Ссылка получена",
