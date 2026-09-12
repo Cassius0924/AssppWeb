@@ -20,6 +20,14 @@ export class AuthenticationError extends Error {
   }
 }
 
+/** Apple is counting recent sign-in attempts; more of them make it worse. */
+export class AuthAttemptsExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthAttemptsExceededError';
+  }
+}
+
 /** Apple answered without a response the sign-in flow can act on. */
 export class AuthEndpointError extends Error {
   constructor(
@@ -288,6 +296,17 @@ export async function authenticate(
           failureType: dict.failureType,
           customerMessage: failureMessage,
         });
+
+        // 5020 counts recent sign-in attempts, not a wrong password on this
+        // one: Apple returns it once several have failed in a short window,
+        // and the account keeps working elsewhere. Retrying spends another
+        // attempt against the same counter, so this ends the loop.
+        if (String(dict.failureType) === '5020') {
+          throw new AuthAttemptsExceededError(
+            i18n.t('errors.auth.tooManyAttempts'),
+          );
+        }
+
         throw new Error(
           failureMessage ?? i18n.t('errors.auth.missingAccountInfo'),
         );
@@ -324,6 +343,13 @@ export async function authenticate(
       return account;
     } catch (e) {
       if (e instanceof AuthenticationError) throw e;
+      if (e instanceof AuthAttemptsExceededError) {
+        log.error('Apple is rate-limiting sign-in attempts for this account', {
+          host: requestHost,
+          attempt: currentAttempt,
+        });
+        throw e;
+      }
       if (e instanceof EdgeRefusal) {
         // An edge refusal says nothing about the credentials, so it must not
         // count against them — only against its own budget.

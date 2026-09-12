@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildPlist } from "../../src/apple/plist";
 import {
   authenticate,
+  AuthAttemptsExceededError,
   AuthEndpointError,
 } from "../../src/apple/authenticate";
 import { appleRequest } from "../../src/apple/request";
@@ -220,6 +221,29 @@ describe("apple/authenticate", () => {
     // One try plus the four backoff retries, and no more.
     expect(appleRequest).toHaveBeenCalledTimes(5);
     vi.useRealTimers();
+  });
+
+  it("stops immediately when Apple is counting sign-in attempts", async () => {
+    vi.mocked(fetchBag).mockResolvedValue({
+      authURL: "https://buy.itunes.apple.com/authenticate",
+    });
+    vi.mocked(appleRequest).mockResolvedValue(
+      response({
+        headers: appHeaders,
+        body: buildPlist({
+          failureType: "5020",
+          customerMessage: "Your password was entered incorrectly more than…",
+        }),
+      }),
+    );
+
+    await expect(
+      authenticate("user@example.com", "secret", undefined, undefined, "aabb"),
+    ).rejects.toBeInstanceOf(AuthAttemptsExceededError);
+
+    // Another attempt would spend one more against the counter that just
+    // refused us.
+    expect(appleRequest).toHaveBeenCalledTimes(1);
   });
 
   it("keeps retrying when the store application itself answered", async () => {

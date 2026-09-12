@@ -479,6 +479,7 @@
       "redirectLocation": "無法取得重新導向位址",
       "emptyBody": "認證失敗：伺服器傳回 HTTP {{status}} 且回應主體為空",
       "endpointRefused": "Apple 拒絕了登入請求，且未回傳可處理的回應（HTTP {{status}}）。請等待幾分鐘後再試。",
+      "tooManyAttempts": "Apple 偵測到該帳號近期有多次登入嘗試，暫時拒絕繼續登入。請等待幾分鐘後再試，帳號本身沒有問題。",
       "missingAccountInfo": "回應中缺少 accountInfo",
       "missingAddress": "回應中缺少 address",
       "unknownReason": "未知原因導致認證失敗"
